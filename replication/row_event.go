@@ -674,19 +674,6 @@ func decodeDatetime2(data []byte, dec uint16, tz *time.Location) (interface{}, i
 		tmp = -tmp
 	}
 
-	//var err error
-	//var t time.Time
-	//
-	//if err == nil {
-	//	if MYSQL_TYPE_DATE | MYSQL_TYPE_NEWDATE{
-	//		v = t.In(tz).Format(formatDate)
-	//	} else if  MYSQL_TYPE_DATETIME | MYSQL_TYPE_DATETIME2{
-	//		v = t.In(tz).Format(formatDateTime)
-	//	} else if MYSQL_TYPE_TIME | MYSQL_TYPE_TIME2 | MYSQL_TYPE_TIMESTAMP | MYSQL_TYPE_TIMESTAMP2 {
-	//		v = t.In(tz).Format(formatTime)
-	//	}
-	//}
-
 	// var secPart int64 = tmp % (1 << 24)
 	ymdhms := tmp >> 24
 
