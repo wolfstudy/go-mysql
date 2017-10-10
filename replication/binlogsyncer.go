@@ -67,7 +67,7 @@ type BinlogSyncerConfig struct {
 	ReadTimeout time.Duration
 
 	//time zone
-	tz time.Location
+	tz *time.Location
 }
 
 // BinlogSyncer syncs binlog event from server.
@@ -110,6 +110,7 @@ func NewBinlogSyncer(cfg BinlogSyncerConfig, tz *time.Location) *BinlogSyncer {
 	b.parser = NewBinlogParser()
 	b.parser.SetRawMode(b.cfg.RawModeEnabled)
 	b.parser.SetParseTime(b.cfg.ParseTime)
+	b.parser.SetParseTZ(b.cfg.tz)
 	b.useGTID = false
 	b.running = false
 	b.ctx, b.cancel = context.WithCancel(context.Background())

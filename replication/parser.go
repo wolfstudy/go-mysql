@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/juju/errors"
+	"time"
 )
 
 type BinlogParser struct {
@@ -18,6 +19,7 @@ type BinlogParser struct {
 	rawMode bool
 
 	parseTime bool
+	parseTZ *time.Location
 }
 
 func NewBinlogParser() *BinlogParser {
@@ -120,6 +122,10 @@ func (p *BinlogParser) SetRawMode(mode bool) {
 
 func (p *BinlogParser) SetParseTime(parseTime bool) {
 	p.parseTime = parseTime
+}
+
+func (p *BinlogParser) SetParseTZ(tz *time.Location)  {
+	p.parseTZ = tz
 }
 
 func (p *BinlogParser) parseHeader(data []byte) (*EventHeader, error) {
