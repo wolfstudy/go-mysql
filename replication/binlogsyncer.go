@@ -65,6 +65,9 @@ type BinlogSyncerConfig struct {
 
 	// read timeout
 	ReadTimeout time.Duration
+
+	//time zone
+	tz time.Location
 }
 
 // BinlogSyncer syncs binlog event from server.
@@ -94,7 +97,7 @@ type BinlogSyncer struct {
 }
 
 // NewBinlogSyncer creates the BinlogSyncer with cfg.
-func NewBinlogSyncer(cfg BinlogSyncerConfig) *BinlogSyncer {
+func NewBinlogSyncer(cfg BinlogSyncerConfig, tz *time.Location) *BinlogSyncer {
 	// Clear the Password to avoid outputing it in log.
 	pass := cfg.Password
 	cfg.Password = ""
@@ -111,6 +114,7 @@ func NewBinlogSyncer(cfg BinlogSyncerConfig) *BinlogSyncer {
 	b.running = false
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 
+	detectTZ(tz)
 	return b
 }
 

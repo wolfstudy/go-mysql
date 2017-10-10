@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	log "github.com/sirupsen/logrus"
+	"github.com/ngaut/log"
 	. "github.com/siddontang/go-mysql/mysql"
 	"github.com/siddontang/go/hack"
 )
@@ -229,7 +229,7 @@ type RowsEvent struct {
 	parseTime bool
 }
 
-func (e *RowsEvent) Decode(data []byte) error {
+func (e *RowsEvent) Decode(data []byte, tz *time.Location) error {
 	pos := 0
 	e.TableID = FixedLengthInt(data[0:e.tableIDSize])
 	pos += e.tableIDSize
@@ -278,13 +278,13 @@ func (e *RowsEvent) Decode(data []byte) error {
 	}()
 
 	for pos < len(data) {
-		if n, err = e.decodeRows(data[pos:], e.Table, e.ColumnBitmap1); err != nil {
+		if n, err = e.decodeRows(data[pos:], e.Table, e.ColumnBitmap1, tz); err != nil {
 			return errors.Trace(err)
 		}
 		pos += n
 
 		if e.needBitmap2 {
-			if n, err = e.decodeRows(data[pos:], e.Table, e.ColumnBitmap2); err != nil {
+			if n, err = e.decodeRows(data[pos:], e.Table, e.ColumnBitmap2, tz); err != nil {
 				return errors.Trace(err)
 			}
 			pos += n
@@ -298,7 +298,7 @@ func isBitSet(bitmap []byte, i int) bool {
 	return bitmap[i>>3]&(1<<(uint(i)&7)) > 0
 }
 
-func (e *RowsEvent) decodeRows(data []byte, table *TableMapEvent, bitmap []byte) (int, error) {
+func (e *RowsEvent) decodeRows(data []byte, table *TableMapEvent, bitmap []byte, tz *time.Location) (int, error) {
 	row := make([]interface{}, e.ColumnCount)
 
 	pos := 0
@@ -332,7 +332,7 @@ func (e *RowsEvent) decodeRows(data []byte, table *TableMapEvent, bitmap []byte)
 			continue
 		}
 
-		row[i], n, err = e.decodeValue(data[pos:], table.ColumnType[i], table.ColumnMeta[i])
+		row[i], n, err = e.decodeValue(data[pos:], table.ColumnType[i], table.ColumnMeta[i], tz)
 
 		if err != nil {
 			return 0, err
@@ -360,7 +360,7 @@ func (e *RowsEvent) parseFracTime(t interface{}) interface{} {
 }
 
 // see mysql sql/log_event.cc log_event_print_value
-func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{}, n int, err error) {
+func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16, tz *time.Location) (v interface{}, n int, err error) {
 	var length int = 0
 
 	if tp == MYSQL_TYPE_STRING {
@@ -379,7 +379,6 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 			length = int(meta)
 		}
 	}
-
 	switch tp {
 	case MYSQL_TYPE_NULL:
 		return nil, 0, nil
@@ -417,9 +416,10 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 	case MYSQL_TYPE_TIMESTAMP:
 		n = 4
 		t := binary.LittleEndian.Uint32(data)
-		v = e.parseFracTime(fracTime{time.Unix(int64(t), 0), 0})
+		v = e.parseFracTime(fracTime{time.Unix(int64(t), 0), tz, 0})
+
 	case MYSQL_TYPE_TIMESTAMP2:
-		v, n, err = decodeTimestamp2(data, meta)
+		v, n, err = decodeTimestamp2(data, meta, tz)
 		v = e.parseFracTime(v)
 	case MYSQL_TYPE_DATETIME:
 		n = 8
@@ -433,9 +433,9 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 			int((t%10000)/100),
 			int(t%100),
 			0,
-			time.UTC), 0})
+			time.UTC), tz, 0})
 	case MYSQL_TYPE_DATETIME2:
-		v, n, err = decodeDatetime2(data, meta)
+		v, n, err = decodeDatetime2(data, meta, tz)
 		v = e.parseFracTime(v)
 	case MYSQL_TYPE_TIME:
 		n = 3
@@ -450,7 +450,7 @@ func (e *RowsEvent) decodeValue(data []byte, tp byte, meta uint16) (v interface{
 			v = fmt.Sprintf("%s%02d:%02d:%02d", sign, i32/10000, (i32%10000)/100, i32%100)
 		}
 	case MYSQL_TYPE_TIME2:
-		v, n, err = decodeTime2(data, meta)
+		v, n, err = decodeTime2(data, meta, tz)
 	case MYSQL_TYPE_DATE:
 		n = 3
 		i32 := uint32(FixedLengthInt(data[0:3]))
@@ -625,7 +625,7 @@ func decodeBit(data []byte, nbits int, length int) (value int64, err error) {
 	return
 }
 
-func decodeTimestamp2(data []byte, dec uint16) (interface{}, int, error) {
+func decodeTimestamp2(data []byte, dec uint16, tz *time.Location) (interface{}, int, error) {
 	//get timestamp binary length
 	n := int(4 + (dec+1)/2)
 	sec := int64(binary.BigEndian.Uint32(data[0:4]))
@@ -640,15 +640,15 @@ func decodeTimestamp2(data []byte, dec uint16) (interface{}, int, error) {
 	}
 
 	if sec == 0 {
-		return formatZeroTime(int(usec), int(dec)), n, nil
+		return formatZeroTime(int(usec), int(dec), tz), n, nil
 	}
 
-	return fracTime{time.Unix(sec, usec*1000), int(dec)}, n, nil
+	return fracTime{time.Unix(sec, usec*1000), tz, int(dec)}, n, nil
 }
 
 const DATETIMEF_INT_OFS int64 = 0x8000000000
 
-func decodeDatetime2(data []byte, dec uint16) (interface{}, int, error) {
+func decodeDatetime2(data []byte, dec uint16, tz *time.Location) (interface{}, int, error) {
 	//get datetime binary length
 	n := int(5 + (dec+1)/2)
 
@@ -665,7 +665,7 @@ func decodeDatetime2(data []byte, dec uint16) (interface{}, int, error) {
 	}
 
 	if intPart == 0 {
-		return formatZeroTime(int(frac), int(dec)), n, nil
+		return formatZeroTime(int(frac), int(dec), tz), n, nil
 	}
 
 	tmp := intPart<<24 + frac
@@ -673,6 +673,19 @@ func decodeDatetime2(data []byte, dec uint16) (interface{}, int, error) {
 	if tmp < 0 {
 		tmp = -tmp
 	}
+
+	//var err error
+	//var t time.Time
+	//
+	//if err == nil {
+	//	if MYSQL_TYPE_DATE | MYSQL_TYPE_NEWDATE{
+	//		v = t.In(tz).Format(formatDate)
+	//	} else if  MYSQL_TYPE_DATETIME | MYSQL_TYPE_DATETIME2{
+	//		v = t.In(tz).Format(formatDateTime)
+	//	} else if MYSQL_TYPE_TIME | MYSQL_TYPE_TIME2 | MYSQL_TYPE_TIMESTAMP | MYSQL_TYPE_TIMESTAMP2 {
+	//		v = t.In(tz).Format(formatTime)
+	//	}
+	//}
 
 	// var secPart int64 = tmp % (1 << 24)
 	ymdhms := tmp >> 24
@@ -689,13 +702,13 @@ func decodeDatetime2(data []byte, dec uint16) (interface{}, int, error) {
 	minute := int((hms >> 6) % (1 << 6))
 	hour := int((hms >> 12))
 
-	return fracTime{time.Date(year, time.Month(month), day, hour, minute, second, int(frac*1000), time.UTC), int(dec)}, n, nil
+	return fracTime{time.Date(year, time.Month(month), day, hour, minute, second, int(frac*1000), time.UTC), tz,int(dec)}, n, nil
 }
 
 const TIMEF_OFS int64 = 0x800000000000
 const TIMEF_INT_OFS int64 = 0x800000
 
-func decodeTime2(data []byte, dec uint16) (string, int, error) {
+func decodeTime2(data []byte, dec uint16, tz *time.Location) (string, int, error) {
 	//time  binary length
 	n := int(3 + (dec+1)/2)
 
